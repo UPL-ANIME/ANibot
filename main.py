@@ -1,3 +1,4 @@
+import os
 import telebot
 import base64
 import json
@@ -10,16 +11,17 @@ import time
 import re 
 
 # --- SOZLAMALAR ---
-TOKEN = os.getenv("BOT_TOKEN") 
+TOKEN = os.getenv("BOT_TOKEN")
 GH_TOKEN = os.getenv("GH_TOKEN")
 REPO_NAME = "UPL-ANIME/annn"
 FILE_PATH = "anim.json"
 ANIMEID_PATH = "animeid.json"
 CHANNELS_PATH = "channels.json"
+ADMINS_PATH = "admins.json" # Adminlar ro'yxati uchun fayl
 ADMIN_ID = 5297746319
 MINI_APP_URL = "https://upl-anime.github.io/TGteganime/"
 IMGBB_API_KEY = "4370f5ebb3ad2302e03c1638b2ccb8c2"
-POST_CHANNEL_ID = "@uzbekchaanimelarafna" # Anime post qilinadigan kanal
+POST_CHANNEL_ID = "@uzbekchaanimelarafna"
 
 GENRES = ["Sarguzasht", "Fantaziya", "Romantika", "Drama", "Komediya", "Isekai", "Psixologik", "Horror", "Hayotiy", "Sport", "Magik"]
 
@@ -29,6 +31,9 @@ bot = telebot.TeleBot(TOKEN)
 user_data = {}
 random_map = {}
 last_sticker_link = None
+
+# Tugmani qayta-qayta bosishdan himoya (Antiflood)
+last_click = {}
 
 # --- YORDAMCHI FUNKSIYALAR ---
 def get_github_content(path):
@@ -41,7 +46,12 @@ def get_github_content(path):
         print(f"({path}): {e}")
         if path == FILE_PATH: return [], None
         if path == CHANNELS_PATH: return {"tg": [], "insta": ""}, None
+        if path == ADMINS_PATH: return [ADMIN_ID, 6448946979], None
         return {}, None
+
+def is_admin(user_id):
+    admins, _ = get_github_content(ADMINS_PATH)
+    return user_id in admins
 
 def load_all_ids():
     global random_map
@@ -90,7 +100,7 @@ def save_github(repo, contents, path, data):
         repo.create_file(path, "create", json_str)
 
 def check_subscription(user_id):
-    if user_id == ADMIN_ID: return True
+    if is_admin(user_id): return True
     data, _ = get_github_content(CHANNELS_PATH)
     if not data or not data.get("tg"): return True
     for channel in data["tg"]:
@@ -115,6 +125,7 @@ def admin_menu():
         types.InlineKeyboardButton("➕ Yangi qism qo'shish", callback_data="add_anime"),
         types.InlineKeyboardButton("⚙️ Animelarni tahrirlash", callback_data="manage_anime"),
         types.InlineKeyboardButton("📢 Majburiy obuna sozalamalari", callback_data="sub_settings"),
+        types.InlineKeyboardButton("👑 Adminlarni boshqarish", callback_data="manage_admins"),
         types.InlineKeyboardButton("🏠 Bosh menyu", callback_data="back_to_admin")
     )
     return markup
@@ -159,7 +170,7 @@ def handle_start(message):
 
 @bot.message_handler(commands=['admin'])
 def handle_admin(message):
-    if message.from_user.id == ADMIN_ID or message.from_user.id == 6448946979:
+    if is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "Admin panelga xush kelibsiz:", reply_markup=admin_menu())
     else:
         bot.send_message(message.chat.id, "Siz admin emassiz!")
@@ -167,6 +178,14 @@ def handle_admin(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     global last_sticker_link
+    
+    # --- Antiflood (Tugmani ko'p bosishdan himoya) ---
+    now = time.time()
+    if call.from_user.id in last_click and now - last_click[call.from_user.id] < 1:
+        bot.answer_callback_query(call.id, "Iltimos, biroz kuting...")
+        return
+    last_click[call.from_user.id] = now
+    
     repo = g.get_repo(REPO_NAME)
 
     if call.data.startswith("check_sub"):
@@ -186,13 +205,36 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "Hali hamma kanallarga a'zo emassiz!", show_alert=True)
         return
 
-    if call.from_user.id != ADMIN_ID: return
+    if not is_admin(call.from_user.id): return
     
     data_list, contents = get_github_content(FILE_PATH)
     if not isinstance(data_list, list): data_list = []
     
     if call.data == "back_to_admin":
         bot.edit_message_text("Admin panel", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
+
+    elif call.data == "manage_admins":
+        admins, _ = get_github_content(ADMINS_PATH)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("➕ Yangi admin qo'shish", callback_data="add_new_admin"))
+        for adm in admins:
+            if adm != ADMIN_ID:
+                markup.add(types.InlineKeyboardButton(f"❌ O'chirish: {adm}", callback_data=f"del_adm_{adm}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
+        bot.edit_message_text("Adminlar boshqaruvi:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "add_new_admin":
+        msg = bot.send_message(call.message.chat.id, "Yangi admin ID raqamini yuboring:")
+        bot.register_next_step_handler(msg, save_admin_id)
+
+    elif call.data.startswith("del_adm_"):
+        target_adm = int(call.data.replace("del_adm_", ""))
+        admins, adm_contents = get_github_content(ADMINS_PATH)
+        if target_adm in admins:
+            admins.remove(target_adm)
+            save_github(repo, adm_contents, ADMINS_PATH, admins)
+            bot.answer_callback_query(call.id, "Admin o'chirildi")
+            bot.edit_message_text("Admin o'chirildi. Panelni yangilang.", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
 
     elif call.data == "sub_settings":
         sub_data, _ = get_github_content(CHANNELS_PATH)
@@ -221,12 +263,7 @@ def callback_query(call):
             sub_data["tg"].remove(target)
             save_github(repo, sub_contents, CHANNELS_PATH, sub_data)
             bot.answer_callback_query(call.id, f"{target} o'chirildi")
-            sub_data_new, _ = get_github_content(CHANNELS_PATH)
-            markup_new = types.InlineKeyboardMarkup(row_width=1)
-            for ch in sub_data_new.get("tg", []):
-                markup_new.add(types.InlineKeyboardButton(f"❌ {ch}", callback_data=f"remove_tg_{ch}"))
-            markup_new.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="sub_settings"))
-            bot.edit_message_text("O'chirish uchun kanalni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup_new)
+            bot.edit_message_text("Kanal o'chirildi.", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
 
     elif call.data == "add_tg":
         msg = bot.send_message(call.message.chat.id, "Kanal userneymini yuboring (masalan: @afnacodercpy):")
@@ -341,6 +378,20 @@ def callback_query(call):
         bot.register_next_step_handler(msg, update_title_sticker, data_list, repo, contents)
 
 # --- ADMIN QO'SHIMCHA FUNKSIYALAR ---
+def save_admin_id(message):
+    try:
+        new_id = int(message.text)
+        repo = g.get_repo(REPO_NAME)
+        admins, adm_contents = get_github_content(ADMINS_PATH)
+        if new_id not in admins:
+            admins.append(new_id)
+            save_github(repo, adm_contents, ADMINS_PATH, admins)
+            bot.send_message(message.chat.id, f"✅ {new_id} admin etib tayinlandi!", reply_markup=admin_menu())
+        else:
+            bot.send_message(message.chat.id, "Ushbu ID allaqachon admin!")
+    except:
+        bot.send_message(message.chat.id, "ID faqat raqamlardan iborat bo'lishi kerak!")
+
 def save_new_tg(message):
     if not message.text.startswith("@"):
         bot.send_message(message.chat.id, "❌ Xato! @ bilan boshlang.")
@@ -473,7 +524,6 @@ def finalize_multi_upload(message):
     )
     
     post_markup = types.InlineKeyboardMarkup()
-    # Ilova tugmasi
     app_link = f"https://t.me/animeuzbektilida_afna_robot/link?startapp={current_anime['id']}"
     post_markup.add(types.InlineKeyboardButton("📺 Tomosha qilish (Mini App)", url=app_link))
     
