@@ -179,7 +179,7 @@ def handle_admin(message):
 def callback_query(call):
     global last_sticker_link
     
-    # --- Antiflood (Tugmani ko'p bosishdan himoya) ---
+    # --- Antiflood ---
     now = time.time()
     if call.from_user.id in last_click and now - last_click[call.from_user.id] < 1:
         bot.answer_callback_query(call.id, "Iltimos, biroz kuting...")
@@ -296,10 +296,15 @@ def callback_query(call):
             types.InlineKeyboardButton("Posterni tahrirlash", callback_data="editthumb"),
             types.InlineKeyboardButton("Title rasmini tahrirlash", callback_data="edittitlerasmi"),
             types.InlineKeyboardButton("Qismlarni boshqarish", callback_data="manage_eps"),
+            types.InlineKeyboardButton("📝 So'z tayinlash", callback_data="assign_keyword"),
             types.InlineKeyboardButton("❌ Animeni o'chirish", callback_data="del_anime"),
             types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin")
         )
         bot.edit_message_text("Taxrir bo'limi", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "assign_keyword":
+        msg = bot.send_message(call.message.chat.id, "Ushbu anime uchun kalit so'z (keyword) yuboring:")
+        bot.register_next_step_handler(msg, update_anime_field, "keyword", data_list, repo, contents)
 
     elif call.data == "del_anime":
         new_data = [a for a in data_list if str(a["id"]) != str(user_data["edit_id"])]
@@ -567,6 +572,33 @@ def text_h(message):
     if not check_subscription(message.from_user.id):
         handle_start(message)
         return
+
+    # --- Kalit so'z bo'yicha qidiruv (Siz so'ragan funksiya) ---
+    data_list, _ = get_github_content(FILE_PATH)
+    for anime in data_list:
+        if "keyword" in anime and anime["keyword"].lower() == message.text.lower():
+            clean_title = re.sub(r",\{.*?\}", "", anime["title"]).split("📽")[0].strip()
+            genre_str = ", ".join(anime["turkum"])
+            
+            caption = (
+                f"➤🎬Nomi: {clean_title}\n\n"
+                f"➤🎥 Qismlar soni: {len(anime['qismlar'])}\n"
+                f"➤🎞 Janri: {genre_str}\n\n"
+                f"Qismlar:\n"
+            )
+            
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            btns = [types.InlineKeyboardButton(ep["nom"], url=ep["link"]) for ep in anime["qismlar"]]
+            markup.add(*btns)
+            # Ilova tugmasini ham qo'shamiz
+            app_link = f"https://t.me/animeuzbektilida_afna_robot/link?startapp={anime['id']}"
+            markup.add(types.InlineKeyboardButton("📺 Mini App-da ko'rish", url=app_link))
+
+            if anime["thumb"].startswith("http"):
+                bot.send_photo(message.chat.id, anime["thumb"], caption=caption, reply_markup=markup)
+            else:
+                bot.send_message(message.chat.id, caption, reply_markup=markup)
+            return
 
     if message.text == "📺 Anime ko'rish": 
         markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Ilova", web_app=types.WebAppInfo(MINI_APP_URL)))
