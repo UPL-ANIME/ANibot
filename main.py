@@ -9,6 +9,7 @@ import random
 import string
 import time
 import re 
+import yt_dlp
 
 # --- TRANSLATE FUNKSIYASI ---
 def translate_text(text, src='en', dest='uz'):
@@ -286,7 +287,7 @@ def callback_query(call):
                 user_data["short_ona_name"] = re.sub(r",\{.*?\}", "", a["title"]).split("📽")[0].strip()
                 break
         user_data["short_list"] = []
-        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts videosini yuboring (Fayl, Insta yoki YouTube link). Tugatgach /boldi deb yozing:")
+        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring (Fayl yoki Insta/YT link).\n\nTugatgach /boldi deb yozing:")
         bot.register_next_step_handler(msg, collect_shorts_multi)
 
     elif call.data == "manage_admins":
@@ -400,7 +401,7 @@ def update_web_settings(message):
     save_github(repo, web_contents, WEB_SETTINGS_PATH, web_data)
     bot.send_message(message.chat.id, "Admin panel", reply_markup=admin_menu())
 
-# --- SHORTS MANTIQI (YANGILANGAN) ---
+# --- SHORTS MULTI UPLOAD MANTIQI ---
 def collect_shorts_multi(message):
     if message.text == "/boldi":
         if not user_data.get("short_list"):
@@ -409,32 +410,68 @@ def collect_shorts_multi(message):
         finalize_shorts_upload(message)
         return
 
-    # Video fayl bo'lsa
+    # Fayl bo'lsa
     if message.video or message.document:
         file_id = message.video.file_id if message.video else message.document.file_id
         bot.send_message(message.chat.id, "⏳ Video Wistiaga yuklanmoqda...")
         file_info = bot.get_file(file_id)
         file_bytes = bot.download_file(file_info.file_path)
-        try:
-            url = "https://upload.wistia.com/"
-            params = {"api_password": WISTIA_API_KEY}
-            files = {"file": (f"short_{int(time.time())}.mp4", file_bytes, "video/mp4")}
-            res = requests.post(url, params=params, files=files)
-            if res.status_code == 200:
-                hashed_id = res.json()["hashed_id"]
+        hashed_id = upload_video_to_wistia(file_bytes)
+        if hashed_id:
+            user_data["short_list"].append(hashed_id)
+            bot.send_message(message.chat.id, f"✅ Fayl yuklandi. Jami: {len(user_data['short_list'])}")
+        else:
+            bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
+
+    # Link bo'lsa (Insta/YT)
+    elif message.text and message.text.startswith("http"):
+        bot.send_message(message.chat.id, "⏳ Linkdan video yuklab olinmoqda...")
+        video_bytes = download_from_link(message.text)
+        if video_bytes:
+            bot.send_message(message.chat.id, "⏳ Wistiaga o'tkazilmoqda...")
+            hashed_id = upload_video_to_wistia(video_bytes)
+            if hashed_id:
                 user_data["short_list"].append(hashed_id)
-                bot.send_message(message.chat.id, f"✅ Fayl yuklandi. Jami: {len(user_data['short_list'])}")
+                bot.send_message(message.chat.id, f"✅ Link yuklandi. Jami: {len(user_data['short_list'])}")
             else:
                 bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
-        except:
-            bot.send_message(message.chat.id, "❌ Xatolik.")
-    
-    # Link bo'lsa (Insta/YT)
-    elif message.text and (message.text.startswith("http")):
-        user_data["short_list"].append(message.text)
-        bot.send_message(message.chat.id, f"✅ Link saqlandi. Jami: {len(user_data['short_list'])}")
-    
+        else:
+            bot.send_message(message.chat.id, "❌ Linkdan yuklab bo'lmadi (Noto'g'ri link yoki xizmat band).")
+
     bot.register_next_step_handler(message, collect_shorts_multi)
+
+def download_from_link(link):
+    """Linkdan video yuklab olish (YouTube, Insta, etc)"""
+    try:
+        ydl_opts = {
+            'format': 'best',
+            'outtmpl': 'temp_video.mp4',
+            'quiet': True,
+            'no_warnings': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([link])
+        
+        with open('temp_video.mp4', 'rb') as f:
+            data = f.read()
+        os.remove('temp_video.mp4')
+        return data
+    except Exception as e:
+        print(f"DL Error: {e}")
+        return None
+
+def upload_video_to_wistia(file_bytes):
+    """Wistiaga yuklash"""
+    try:
+        url = "https://upload.wistia.com/"
+        params = {"api_password": WISTIA_API_KEY}
+        files = {"file": (f"short_{int(time.time())}.mp4", file_bytes, "video/mp4")}
+        res = requests.post(url, params=params, files=files)
+        if res.status_code == 200:
+            return res.json()["hashed_id"]
+    except:
+        pass
+    return None
 
 def finalize_shorts_upload(message):
     repo = g.get_repo(REPO_NAME)
@@ -599,3 +636,4 @@ def text_h(message):
 
 load_all_ids()
 bot.infinity_polling()
+
