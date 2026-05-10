@@ -264,12 +264,6 @@ def callback_query(call):
     if call.data == "back_to_admin":
         bot.edit_message_text("Admin panel", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
 
-    elif call.data == "web_settings":
-        web_data, _ = get_github_content(WEB_SETTINGS_PATH)
-        text = f"🌐 Web App Sozlamalari:\n\nNomi: {web_data['name']}\nLogo: {web_data['logo']}"
-        msg = bot.send_message(call.message.chat.id, f"{text}\n\nYangi nom kiriting yoki yangi rasm yuboring:")
-        bot.register_next_step_handler(msg, update_web_settings)
-
     elif call.data == "manage_anime":
         markup = types.InlineKeyboardMarkup(row_width=1)
         for anime in data_list:
@@ -284,11 +278,36 @@ def callback_query(call):
             types.InlineKeyboardButton("Nomini tahrirlash", callback_data="editname"),
             types.InlineKeyboardButton("Posterni tahrirlash", callback_data="editthumb"),
             types.InlineKeyboardButton("Title rasmini tahrirlash", callback_data="edittitlerasmi"),
+            types.InlineKeyboardButton("Qismlarni boshqarish", callback_data="manage_eps"),
             types.InlineKeyboardButton("📝 So'zlar tayinlash", callback_data="assign_keyword"),
             types.InlineKeyboardButton("❌ Animeni o'chirish", callback_data="del_anime"),
             types.InlineKeyboardButton("⬅️ Orqaga", callback_data="manage_anime")
         )
         bot.edit_message_text("Taxrir bo'limi", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    # --- QISMLARNI BOSHQARISH ---
+    elif call.data == "manage_eps":
+        anime = next((a for a in data_list if str(a["id"]) == str(user_data["edit_id"])), None)
+        if anime:
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            for i, ep in enumerate(anime["qismlar"]):
+                markup.add(
+                    types.InlineKeyboardButton(ep["nom"], callback_data="noop"),
+                    types.InlineKeyboardButton("❌", callback_data=f"delepx_{i}")
+                )
+            markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data=f"edit_{anime['id']}"))
+            bot.edit_message_text(f"{anime['title']} qismlari:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("delepx_"):
+        idx = int(call.data.split("_")[1])
+        for anime in data_list:
+            if str(anime["id"]) == str(user_data["edit_id"]):
+                anime["qismlar"].pop(idx)
+                break
+        save_github(repo, contents, FILE_PATH, data_list)
+        bot.answer_callback_query(call.id, "Qism o'chirildi!")
+        # Menuni yangilash
+        callback_query(types.CallbackQuery(call.id, call.from_user, "manage_eps", call.chat_instance, call.message))
 
     # --- TAHRIRLASH LOGIKASI ---
     elif call.data == "editname":
@@ -364,7 +383,7 @@ def callback_query(call):
         bot.register_next_step_handler(msg, get_ai_result)
 
     elif call.data == "ai_search_skip":
-        ask_title_sticker(call.message)
+        ask_title_sticker(message)
 
     elif call.data.startswith("anime_"):
         user_data["exists"] = True
@@ -382,7 +401,6 @@ def update_anime_field_process(message, field):
     for anime in data_list:
         if str(anime["id"]) == str(user_data["edit_id"]):
             if field == "title":
-                # Title formatini saqlab qolish
                 old_title = anime["title"]
                 sticker_part = re.search(r",\{.*?\}", old_title)
                 sticker = sticker_part.group(0) if sticker_part else ""
@@ -405,10 +423,8 @@ def update_title_image_process(message):
                 break
         save_github(repo, contents, FILE_PATH, data_list)
         bot.send_message(message.chat.id, "✅ Title rasmi yangilandi!", reply_markup=admin_menu())
-    else:
-        bot.send_message(message.chat.id, "❌ Rasm yuklanmadi.")
 
-# --- WEB SETTINGS ---
+# --- QOLGAN FUNKSIYALAR ---
 def update_web_settings(message):
     repo = g.get_repo(REPO_NAME)
     web_data, web_contents = get_github_content(WEB_SETTINGS_PATH)
@@ -423,7 +439,6 @@ def update_web_settings(message):
     save_github(repo, web_contents, WEB_SETTINGS_PATH, web_data)
     bot.send_message(message.chat.id, "Admin panel", reply_markup=admin_menu())
 
-# --- SHORTS MANTIQI ---
 def upload_shorts_video(message):
     if not (message.video or message.document):
         bot.send_message(message.chat.id, "Iltimos video yuboring!")
@@ -449,7 +464,6 @@ def upload_shorts_video(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Xatolik: {e}")
 
-# --- QADAMMA-QADAM MANTIQ ---
 def get_new_title(message):
     user_data["title"] = message.text
     msg = bot.send_message(message.chat.id, "Anime bosh posterini yuboring:")
