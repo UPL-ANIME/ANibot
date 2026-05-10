@@ -287,7 +287,7 @@ def callback_query(call):
                 user_data["short_ona_name"] = re.sub(r",\{.*?\}", "", a["title"]).split("📽")[0].strip()
                 break
         user_data["short_list"] = []
-        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring (Fayl yoki Insta/YT link).\n\nTugatgach /boldi deb yozing:")
+        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring yoki linklar ro'yxatini (har biri yangi qatorda) tashlang.\n\nTugatgach /boldi deb yozing:")
         bot.register_next_step_handler(msg, collect_shorts_multi)
 
     elif call.data == "manage_admins":
@@ -401,7 +401,7 @@ def update_web_settings(message):
     save_github(repo, web_contents, WEB_SETTINGS_PATH, web_data)
     bot.send_message(message.chat.id, "Admin panel", reply_markup=admin_menu())
 
-# --- SHORTS MULTI UPLOAD MANTIQI ---
+# --- SHORTS MULTI UPLOAD MANTIQI (YANGILANGAN) ---
 def collect_shorts_multi(message):
     if message.text == "/boldi":
         if not user_data.get("short_list"):
@@ -423,20 +423,27 @@ def collect_shorts_multi(message):
         else:
             bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
 
-    # Link bo'lsa (Insta/YT)
-    elif message.text and message.text.startswith("http"):
-        bot.send_message(message.chat.id, "⏳ Linkdan video yuklab olinmoqda...")
-        video_bytes = download_from_link(message.text)
-        if video_bytes:
-            bot.send_message(message.chat.id, "⏳ Wistiaga o'tkazilmoqda...")
-            hashed_id = upload_video_to_wistia(video_bytes)
-            if hashed_id:
-                user_data["short_list"].append(hashed_id)
-                bot.send_message(message.chat.id, f"✅ Link yuklandi. Jami: {len(user_data['short_list'])}")
+    # Link yoki Linklar ro'yxati bo'lsa
+    elif message.text and ("http" in message.text):
+        links = message.text.splitlines()
+        for link in links:
+            link = link.strip()
+            if not link.startswith("http"): continue
+            
+            bot.send_message(message.chat.id, f"⏳ {link} yuklab olinmoqda...")
+            video_bytes = download_from_link(link)
+            if video_bytes:
+                bot.send_message(message.chat.id, "⏳ Wistiaga o'tkazilmoqda...")
+                hashed_id = upload_video_to_wistia(video_bytes)
+                if hashed_id:
+                    user_data["short_list"].append(hashed_id)
+                    bot.send_message(message.chat.id, f"✅ Muvaffaqiyatli: {link}")
+                else:
+                    bot.send_message(message.chat.id, f"❌ Wistia xatosi: {link}")
             else:
-                bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
-        else:
-            bot.send_message(message.chat.id, "❌ Linkdan yuklab bo'lmadi (Noto'g'ri link yoki xizmat band).")
+                bot.send_message(message.chat.id, f"❌ Yuklab bo'lmadi: {link}")
+        
+        bot.send_message(message.chat.id, f"Jami yig'ildi: {len(user_data['short_list'])}. Tugatish uchun /boldi deb yozing.")
 
     bot.register_next_step_handler(message, collect_shorts_multi)
 
