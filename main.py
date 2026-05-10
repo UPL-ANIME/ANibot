@@ -55,7 +55,7 @@ def get_github_content(path):
         contents = repo.get_contents(path)
         data = json.loads(base64.b64decode(contents.content).decode("utf-8"))
         return data, contents
-    except Exception as e:
+    except Exception:
         if path == FILE_PATH: return [], None
         if path == SHORT_PATH: return [], None
         if path == WEB_SETTINGS_PATH: return {"name": "AFNA", "logo": ""}, None
@@ -85,58 +85,50 @@ def upload_to_imgbb(message):
             if res_raw.status_code == 200:
                 res = res_raw.json()
                 return res['data']['url'] if res.get('success') else None
-        elif message.text and (message.text.startswith("http://") or message.text.startswith("https://")):
-            return message.text
     except:
         return None
     return None
 
 def download_from_link(link):
-    """Linkdan video yuklab olish (Cobalt API - Eng barqaror usul)"""
+    """Linkdan video yuklab olish (Maksimal himoya bilan)"""
+    file_name = f"video_{int(time.time())}.mp4"
     try:
-        api_url = "https://api.cobalt.tools/api/json"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "url": link,
-            "vQuality": "720",
-            "isAudioOnly": False
+        cookie_path = 'cookies.txt'
+        ydl_opts = {
+            # Faqat tayyor MP4 formatini yuklaymiz (FFmpeg talab qilmasligi uchun)
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': file_name,
+            'quiet': True,
+            'no_warnings': True,
+            # YouTube-ga biz brauzermiz deb aytamiz
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'referer': 'https://www.google.com/',
+            'nocheckcertificate': True,
+            'geo_bypass': True,
         }
         
-        response = requests.post(api_url, json=payload, headers=headers, timeout=15)
-        if response.status_code == 200:
-            video_url = response.json().get("url")
-            if video_url:
-                video_res = requests.get(video_url, stream=True)
-                return video_res.content
-    except Exception as e:
-        print(f"Yuklashda xato (API): {e}")
-    
-    # API ishlamasa, muqobil sifatida yt-dlp (cookies bilan)
-    try:
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': 'temp_v.mp4',
-            'quiet': True,
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-        }
+        # Agar cookies bo'lsa, ulash
+        if os.path.exists(cookie_path):
+            ydl_opts['cookiefile'] = cookie_path
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([link])
-        if os.path.exists('temp_v.mp4'):
-            with open('temp_v.mp4', 'rb') as f:
+        
+        if os.path.exists(file_name):
+            with open(file_name, 'rb') as f:
                 data = f.read()
-            os.remove('temp_v.mp4')
+            os.remove(file_name)
             return data
-    except:
-        return None
+    except Exception as e:
+        print(f"DL Error: {e}")
+        if os.path.exists(file_name): os.remove(file_name)
+    return None
 
 def upload_video_to_wistia(file_bytes):
     try:
         url = "https://upload.wistia.com/"
         params = {"api_password": WISTIA_API_KEY}
-        files = {"file": (f"short_{int(time.time())}.mp4", file_bytes, "video/mp4")}
+        files = {"file": (f"v_{int(time.time())}.mp4", file_bytes, "video/mp4")}
         res = requests.post(url, params=params, files=files)
         if res.status_code == 200:
             return res.json()["hashed_id"]
@@ -162,7 +154,7 @@ def check_subscription(user_id):
         except: continue
     return True
 
-# --- MENULAR ---
+# --- ADMIN FUNKSIYALARI ---
 def admin_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -201,7 +193,7 @@ def handle_start(message):
             return
 
     markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚀 Ilovani ochish", web_app=types.WebAppInfo(MINI_APP_URL)))
-    bot.send_message(message.chat.id, "Xush kelibsiz! Anime ko'rish uchun pastdagi tugmani bosing:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Xush kelibsiz!", reply_markup=markup)
 
 @bot.message_handler(commands=['admin'])
 def handle_admin(message):
@@ -226,7 +218,7 @@ def callback_query(call):
                 user_data["short_ona_name"] = a["title"].split(",{")[0].strip()
                 break
         user_data["short_list"] = []
-        msg = bot.send_message(call.message.chat.id, "Shorts videosini yoki YouTube linkini yuboring. Tugatgach /boldi deb yozing:")
+        msg = bot.send_message(call.message.chat.id, "YouTube Shorts linkini yuboring. Tugatgach /boldi deb yozing:")
         bot.register_next_step_handler(msg, collect_shorts)
 
 def collect_shorts(message):
@@ -235,44 +227,39 @@ def collect_shorts(message):
         return
 
     if message.video or message.document:
-        bot.send_message(message.chat.id, "⏳ Fayl yuklanmoqda...")
+        bot.send_message(message.chat.id, "⏳ Fayl yuborilmoqda...")
         f_id = message.video.file_id if message.video else message.document.file_id
         f_bytes = bot.download_file(bot.get_file(f_id).file_path)
         h_id = upload_video_to_wistia(f_bytes)
-        if h_id: user_data["short_list"].append(h_id)
+        if h_id: 
+            user_data["short_list"].append(h_id)
+            bot.send_message(message.chat.id, "✅ Fayl qabul qilindi.")
     
     elif message.text and "http" in message.text:
-        bot.send_message(message.chat.id, "⏳ Linkdan yuklanmoqda...")
+        bot.send_message(message.chat.id, "⏳ Linkdan yuklanmoqda (cookies bilan)...")
         v_bytes = download_from_link(message.text)
         if v_bytes:
             h_id = upload_video_to_wistia(v_bytes)
             if h_id: 
                 user_data["short_list"].append(h_id)
-                bot.send_message(message.chat.id, "✅ Tayyor.")
+                bot.send_message(message.chat.id, "✅ Muvaffaqiyatli yuklandi.")
+            else:
+                bot.send_message(message.chat.id, "❌ Wistia-ga yuklashda xato.")
         else:
-            bot.send_message(message.chat.id, "❌ Link xatosi.")
+            bot.send_message(message.chat.id, "❌ Link xatosi yoki YouTube blokladi. Cookies-ni yangilab ko'ring.")
 
     bot.register_next_step_handler(message, collect_shorts)
 
 def finalize_shorts(message):
+    if not user_data.get("short_list"):
+        bot.send_message(message.chat.id, "Hech narsa saqlanmadi.")
+        return
     repo = g.get_repo(REPO_NAME)
     shorts, s_cont = get_github_content(SHORT_PATH)
-    for item in user_data.get("short_list", []):
+    for item in user_data["short_list"]:
         shorts.append({"nom": user_data["short_ona_name"], "link": item, "ona": user_data["short_ona_id"]})
     save_github(repo, s_cont, SHORT_PATH, shorts)
-    bot.send_message(message.chat.id, "✅ Shorts saqlandi!", reply_markup=admin_menu())
-
-def get_new_title(message):
-    user_data["title"] = message.text
-    msg = bot.send_message(message.chat.id, "Poster rasmini yuboring:")
-    bot.register_next_step_handler(msg, get_poster)
-
-def get_poster(message):
-    user_data["thumb"] = upload_to_imgbb(message)
-    bot.send_message(message.chat.id, "Janrlarni tanlang:", reply_markup=genre_keyboard())
-
-# --- QOLGAN FUNKSIYALAR ---
-# (Sizning oldingi kodingizdagi add_anime, finalize_multi_upload va h.k. bu yerga tushadi)
+    bot.send_message(message.chat.id, f"✅ {len(user_data['short_list'])} ta shorts saqlandi!", reply_markup=admin_menu())
 
 load_all_ids()
 bot.infinity_polling()
