@@ -17,7 +17,7 @@ REPO_NAME = "UPL-ANIME/annn"
 FILE_PATH = "anim.json"
 ANIMEID_PATH = "animeid.json"
 CHANNELS_PATH = "channels.json"
-ADMINS_PATH = "admins.json" # Adminlar ro'yxati uchun fayl
+ADMINS_PATH = "admins.json" 
 ADMIN_ID = 5297746319
 MINI_APP_URL = "https://upl-anime.github.io/TGteganime/"
 IMGBB_API_KEY = "4370f5ebb3ad2302e03c1638b2ccb8c2"
@@ -79,17 +79,41 @@ def upload_to_imgbb(message):
         return None
     return None
 
-def find_original_name(image_url):
+def get_full_anime_info(image_url):
+    """AI orqali anime haqida to'liq ma'lumot olish"""
     try:
         res = requests.get(f"https://api.trace.moe/search?url={image_url}")
         data = res.json()
         if data['result']:
-            filename = data['result'][0]['filename']
-            clean_name = re.sub(r'\[.*?\]|\.mp4|\.mkv|\d+|\(.*?\)|_', ' ', filename).strip()
-            return clean_name
+            anilist_id = data['result'][0]['anilist']
+            query = '''
+            query ($id: Int) {
+              Media (id: $id, type: ANIME) {
+                title { english romaji }
+                description
+                seasonYear
+                countryOfOrigin
+                genres
+              }
+            }
+            '''
+            variables = {'id': anilist_id}
+            response = requests.post('https://graphql.anilist.co', json={'query': query, 'variables': variables})
+            info = response.json()['data']['Media']
+            
+            clean_desc = re.sub('<[^<]+?>', '', info['description'])[:250] + "..."
+            country = "Yaponiya" if info['countryOfOrigin'] == "JP" else info['countryOfOrigin']
+            
+            full_text = (
+                f"➤🌍 Davlati: {country}\n"
+                f"➤📆 Chiqqan yili: {info['seasonYear']}\n"
+                f"➤🎞 Janrlar: {', '.join(info['genres'])}\n"
+                f"➤📝 Voqealar: {clean_desc}"
+            )
+            return info['title']['romaji'] or info['title']['english'], full_text
     except:
-        return None
-    return None
+        return None, "Ma'lumot topilmadi."
+    return None, "Ma'lumot topilmadi."
 
 def save_github(repo, contents, path, data):
     json_str = json.dumps(data, indent=2, ensure_ascii=False)
@@ -161,10 +185,19 @@ def handle_start(message):
 
     text = message.text.split()
     if len(text) > 1:
-        file_id = random_map.get(text[1])
+        anime_key = text[1]
+        file_id = random_map.get(anime_key)
         if file_id:
-            try: bot.send_video(message.chat.id, file_id)
-            except: bot.send_document(message.chat.id, file_id)
+            data_list, _ = get_github_content(FILE_PATH)
+            caption_text = "✨ Anime qismi"
+            for anime in data_list:
+                for ep in anime.get("qismlar", []):
+                    if anime_key in ep.get("link", ""):
+                        clean_t = re.sub(r",\{.*?\}", "", anime["title"]).split("📽")[0].strip()
+                        caption_text = f"🎬 {clean_t}\n🎞 {ep['nom']}"
+                        break
+            try: bot.send_video(message.chat.id, file_id, caption=caption_text)
+            except: bot.send_document(message.chat.id, file_id, caption=caption_text)
         return
     bot.send_message(message.chat.id, "Xush kelibsiz!", reply_markup=main_menu())
 
@@ -178,14 +211,11 @@ def handle_admin(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     global last_sticker_link
-    
-    # --- Antiflood ---
     now = time.time()
     if call.from_user.id in last_click and now - last_click[call.from_user.id] < 1:
         bot.answer_callback_query(call.id, "Iltimos, biroz kuting...")
         return
     last_click[call.from_user.id] = now
-    
     repo = g.get_repo(REPO_NAME)
 
     if call.data.startswith("check_sub"):
@@ -198,17 +228,13 @@ def callback_query(call):
                 if file_id:
                     try: bot.send_video(call.message.chat.id, file_id)
                     except: bot.send_document(call.message.chat.id, file_id)
-                bot.send_message(call.message.chat.id, "Xush kelibsiz!", reply_markup=main_menu())
-            else:
-                bot.send_message(call.message.chat.id, "Obuna tasdiqlandi!", reply_markup=main_menu())
+            bot.send_message(call.message.chat.id, "Xush kelibsiz!", reply_markup=main_menu())
         else:
             bot.answer_callback_query(call.id, "Hali hamma kanallarga a'zo emassiz!", show_alert=True)
         return
 
     if not is_admin(call.from_user.id): return
-    
     data_list, contents = get_github_content(FILE_PATH)
-    if not isinstance(data_list, list): data_list = []
     
     if call.data == "back_to_admin":
         bot.edit_message_text("Admin panel", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
@@ -227,15 +253,6 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, "Yangi admin ID raqamini yuboring:")
         bot.register_next_step_handler(msg, save_admin_id)
 
-    elif call.data.startswith("del_adm_"):
-        target_adm = int(call.data.replace("del_adm_", ""))
-        admins, adm_contents = get_github_content(ADMINS_PATH)
-        if target_adm in admins:
-            admins.remove(target_adm)
-            save_github(repo, adm_contents, ADMINS_PATH, admins)
-            bot.answer_callback_query(call.id, "Admin o'chirildi")
-            bot.edit_message_text("Admin o'chirildi. Panelni yangilang.", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
-
     elif call.data == "sub_settings":
         sub_data, _ = get_github_content(CHANNELS_PATH)
         markup = types.InlineKeyboardMarkup(row_width=2)
@@ -247,31 +264,6 @@ def callback_query(call):
         )
         text = f"📢 TG: {', '.join(sub_data.get('tg', []))}\n📸 Insta: {sub_data.get('insta', 'Yoqilmagan')}"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif call.data == "manage_sub_channels":
-        sub_data, _ = get_github_content(CHANNELS_PATH)
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for ch in sub_data.get("tg", []):
-            markup.add(types.InlineKeyboardButton(f"❌ {ch}", callback_data=f"remove_tg_{ch}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="sub_settings"))
-        bot.edit_message_text("O'chirish uchun kanalni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif call.data.startswith("remove_tg_"):
-        target = call.data.replace("remove_tg_", "")
-        sub_data, sub_contents = get_github_content(CHANNELS_PATH)
-        if target in sub_data["tg"]:
-            sub_data["tg"].remove(target)
-            save_github(repo, sub_contents, CHANNELS_PATH, sub_data)
-            bot.answer_callback_query(call.id, f"{target} o'chirildi")
-            bot.edit_message_text("Kanal o'chirildi.", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
-
-    elif call.data == "add_tg":
-        msg = bot.send_message(call.message.chat.id, "Kanal userneymini yuboring (masalan: @afnacodercpy):")
-        bot.register_next_step_handler(msg, save_new_tg)
-
-    elif call.data == "set_insta":
-        msg = bot.send_message(call.message.chat.id, "Instagram profil linkini yuboring:")
-        bot.register_next_step_handler(msg, save_insta_link)
 
     elif call.data == "add_anime":
         markup = types.InlineKeyboardMarkup(row_width=1)
@@ -296,41 +288,20 @@ def callback_query(call):
             types.InlineKeyboardButton("Posterni tahrirlash", callback_data="editthumb"),
             types.InlineKeyboardButton("Title rasmini tahrirlash", callback_data="edittitlerasmi"),
             types.InlineKeyboardButton("Qismlarni boshqarish", callback_data="manage_eps"),
-            types.InlineKeyboardButton("📝 So'z tayinlash", callback_data="assign_keyword"),
+            types.InlineKeyboardButton("📝 So'zlar tayinlash (ko'p)", callback_data="assign_keyword"),
             types.InlineKeyboardButton("❌ Animeni o'chirish", callback_data="del_anime"),
             types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin")
         )
         bot.edit_message_text("Taxrir bo'limi", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif call.data == "assign_keyword":
-        msg = bot.send_message(call.message.chat.id, "Ushbu anime uchun kalit so'z (keyword) yuboring:")
+        msg = bot.send_message(call.message.chat.id, "Kalit so'zlarni vergul bilan ajratib yuboring (masalan: naruto, boruto, kishi):")
         bot.register_next_step_handler(msg, update_anime_field, "keyword", data_list, repo, contents)
-
-    elif call.data == "del_anime":
-        new_data = [a for a in data_list if str(a["id"]) != str(user_data["edit_id"])]
-        save_github(repo, contents, FILE_PATH, new_data)
-        bot.send_message(call.message.chat.id, "✅ Muvaffaqiyatli o'chirildi.", reply_markup=admin_menu())
-
-    elif call.data == "manage_eps":
-        anime = next(a for a in data_list if str(a["id"]) == str(user_data["edit_id"]))
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, ep in enumerate(anime["qismlar"]):
-            markup.add(types.InlineKeyboardButton(f"🗑 {ep['nom']}", callback_data=f"delep_{i}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data=f"edit_{user_data['edit_id']}"))
-        bot.edit_message_text("O'chirish uchun qismni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif call.data.startswith("delep_"):
-        ep_idx = int(call.data.split("_")[1])
-        for anime in data_list:
-            if str(anime["id"]) == str(user_data["edit_id"]): 
-                anime["qismlar"].pop(ep_idx)
-                break
-        save_github(repo, contents, FILE_PATH, data_list)
-        bot.send_message(call.message.chat.id, "✅ Qism o'chirildi", reply_markup=admin_menu())
 
     elif call.data == "new_anime":
         user_data["exists"] = False
         user_data["genre"] = []
+        user_data["fullnews"] = ""
         msg = bot.send_message(call.message.chat.id, "Anime nomini kiriting:")
         bot.register_next_step_handler(msg, get_new_title)
 
@@ -342,11 +313,11 @@ def callback_query(call):
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=genre_keyboard(user_data["genre"]))
 
     elif call.data == "confirm_genres":
-        if not user_data.get("genre"): return bot.answer_callback_query(call.id, "Janr tanlang!")
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔍 qidirish", callback_data="ai_search_start"),
-                   types.InlineKeyboardButton("⏭", callback_data="ai_search_skip"))
-        bot.send_message(call.message.chat.id, "Ai uchun rasm kiriting ?", reply_markup=markup)
+        markup = types.InlineKeyboardMarkup().add(
+            types.InlineKeyboardButton("🔍 AI Qidiruv", callback_data="ai_search_start"),
+            types.InlineKeyboardButton("⏭ O'tkazib yuborish", callback_data="ai_search_skip")
+        )
+        bot.send_message(call.message.chat.id, "AI orqali ma'lumot qidiramizmi?", reply_markup=markup)
 
     elif call.data == "ai_search_start":
         msg = bot.send_message(call.message.chat.id, "AI topishi uchun rasm yuboring:")
@@ -362,145 +333,70 @@ def callback_query(call):
         bot.send_message(call.message.chat.id, "Videolarni yuboring. Tugatgach /boldi deb yozing.")
         bot.register_next_step_handler(call.message, collect_multi_videos)
 
-    elif call.data == "use_sticker_link":
-        if last_sticker_link:
-            user_data["title"] = f"{user_data['title']} ,{{{last_sticker_link}}}"
-            bot.send_message(call.message.chat.id, "✅ Saqlangan rasm/link titlega qo'shildi.")
-            user_data["temp_videos"] = []
-            bot.send_message(call.message.chat.id, "Videolarni yuboring va /boldi deb yozing.")
-            bot.register_next_step_handler(call.message, collect_multi_videos)
-
-    elif call.data == "editname":
-        msg = bot.send_message(call.message.chat.id, "Yangi nomni kiriting:")
-        bot.register_next_step_handler(msg, update_anime_field, "title", data_list, repo, contents)
-
-    elif call.data == "editthumb":
-        msg = bot.send_message(call.message.chat.id, "Yangi poster yuboring:")
-        bot.register_next_step_handler(msg, update_anime_field, "thumb", data_list, repo, contents)
-
-    elif call.data == "edittitlerasmi":
-        msg = bot.send_message(call.message.chat.id, "Yangi Title rasmini yuboring (linkga aylantiriladi):")
-        bot.register_next_step_handler(msg, update_title_sticker, data_list, repo, contents)
-
-# --- ADMIN QO'SHIMCHA FUNKSIYALAR ---
-def save_admin_id(message):
-    try:
-        new_id = int(message.text)
-        repo = g.get_repo(REPO_NAME)
-        admins, adm_contents = get_github_content(ADMINS_PATH)
-        if new_id not in admins:
-            admins.append(new_id)
-            save_github(repo, adm_contents, ADMINS_PATH, admins)
-            bot.send_message(message.chat.id, f"✅ {new_id} admin etib tayinlandi!", reply_markup=admin_menu())
-        else:
-            bot.send_message(message.chat.id, "Ushbu ID allaqachon admin!")
-    except:
-        bot.send_message(message.chat.id, "ID faqat raqamlardan iborat bo'lishi kerak!")
-
-def save_new_tg(message):
-    if not message.text.startswith("@"):
-        bot.send_message(message.chat.id, "❌ Xato! @ bilan boshlang.")
-        return
-    repo = g.get_repo(REPO_NAME)
-    sub_data, sub_contents = get_github_content(CHANNELS_PATH)
-    if message.text not in sub_data["tg"]:
-        sub_data["tg"].append(message.text)
-        save_github(repo, sub_contents, CHANNELS_PATH, sub_data)
-        bot.send_message(message.chat.id, "✅ Kanal qo'shildi!", reply_markup=admin_menu())
-
-def save_insta_link(message):
-    repo = g.get_repo(REPO_NAME)
-    sub_data, sub_contents = get_github_content(CHANNELS_PATH)
-    sub_data["insta"] = message.text
-    save_github(repo, sub_contents, CHANNELS_PATH, sub_data)
-    bot.send_message(message.chat.id, "✅ Instagram link saqlandi!", reply_markup=admin_menu())
-
 # --- QADAMMA-QADAM MANTIQ ---
 def get_new_title(message):
     user_data["title"] = message.text
-    msg = bot.send_message(message.chat.id, "Anime bosh posterini (Mini App uchun) yuboring:")
+    msg = bot.send_message(message.chat.id, "Anime bosh posterini yuboring:")
     bot.register_next_step_handler(msg, get_poster_initial)
 
 def get_poster_initial(message):
-    pic = upload_to_imgbb(message)
-    user_data["thumb"] = pic if pic else message.text
+    user_data["thumb"] = upload_to_imgbb(message) or message.text
     bot.send_message(message.chat.id, "Janrlarni tanlang:", reply_markup=genre_keyboard())
 
 def get_ai_result(message):
     pic = upload_to_imgbb(message)
     if pic:
-        bot.send_message(message.chat.id, "Qidirilmoqda...")
-        orig_name = find_original_name(pic)
+        bot.send_message(message.chat.id, "AI qidirmoqda...")
+        orig_name, full_info = get_full_anime_info(pic)
         if orig_name:
             user_data["title"] = f"{user_data['title']} 📽 | {orig_name}"
-            bot.send_message(message.chat.id, f"✅ Topildi: {orig_name}")
+            user_data["fullnews"] = full_info
+            bot.send_message(message.chat.id, f"✅ Ma'lumotlar olindi!")
     ask_title_sticker(message)
 
 def ask_title_sticker(message):
-    global last_sticker_link
-    markup = types.InlineKeyboardMarkup()
-    if last_sticker_link:
-        markup.add(types.InlineKeyboardButton("🖼 Oxirgi link/rasm", callback_data="use_sticker_link"))
-    msg = bot.send_message(message.chat.id, "Title ichidagi rasm yuboring yoki link kiriting:", reply_markup=markup)
+    msg = bot.send_message(message.chat.id, "Title ichidagi rasm yuboring yoki link kiriting:")
     bot.register_next_step_handler(msg, finalize_title_with_sticker)
 
 def finalize_title_with_sticker(message):
-    global last_sticker_link
     link = upload_to_imgbb(message)
-    if link:
-        last_sticker_link = link
-        user_data["title"] = f"{user_data['title']} ,{{{link}}}"
+    if link: user_data["title"] = f"{user_data['title']} ,{{{link}}}"
     user_data["temp_videos"] = []
     bot.send_message(message.chat.id, "Videolarni yuboring va /boldi deb yozing.")
     bot.register_next_step_handler(message, collect_multi_videos)
 
 def collect_multi_videos(message):
     if message.text == "/boldi":
-        if not user_data.get("temp_videos") or len(user_data["temp_videos"]) == 0:
-            bot.send_message(message.chat.id, "Hech qanday video yubormadingiz! Kamida bitta video yuboring.")
-            bot.register_next_step_handler(message, collect_multi_videos)
+        if not user_data.get("temp_videos"):
+            bot.send_message(message.chat.id, "Video yubormadingiz!")
             return
-        user_data["v_idx"] = 0
-        user_data["final_eps"] = []
-        ask_ep_name_one_by_one(message)
+        finalize_multi_upload(message)
         return
     if message.video or message.document:
         vid = message.video.file_id if message.video else message.document.file_id
         user_data["temp_videos"].append(vid)
-        bot.send_message(message.chat.id, f"📥 {len(user_data['temp_videos'])}-video qabul qilindi. Yana yuboring yoki /boldi deng.")
+        bot.send_message(message.chat.id, f"📥 {len(user_data['temp_videos'])}-qism qabul qilindi.")
     bot.register_next_step_handler(message, collect_multi_videos)
-
-def ask_ep_name_one_by_one(message):
-    idx = user_data["v_idx"]
-    bot.send_message(message.chat.id, f"{idx+1}-video uchun qism nomini kiriting:")
-    bot.register_next_step_handler(message, save_ep_name_and_next)
-
-def save_ep_name_and_next(message):
-    idx = user_data["v_idx"]
-    vid = user_data["temp_videos"][idx]
-    r_key = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-    user_data["final_eps"].append({"nom": message.text, "vid": vid, "key": r_key})
-    user_data["v_idx"] += 1
-    if user_data["v_idx"] < len(user_data["temp_videos"]):
-        ask_ep_name_one_by_one(message)
-    else:
-        finalize_multi_upload(message)
 
 def finalize_multi_upload(message):
     repo = g.get_repo(REPO_NAME)
     db_data, db_contents = get_github_content(ANIMEID_PATH)
     anim_data, anim_contents = get_github_content(FILE_PATH)
-    if db_data is None: db_data = {}
-    if anim_data is None: anim_data = []
-    new_qismlar = []
-    for item in user_data["final_eps"]:
-        db_data[item["key"]] = item["vid"]
-        link = f"https://t.me/{bot.get_me().username}?start={item['key']}"
-        new_qismlar.append({"nom": item["nom"], "link": link})
-        random_map[item["key"]] = item["vid"]
     
+    new_qismlar = []
+    start_ep = 1
     if user_data.get("exists"):
-        current_anime = None
+        curr = next((a for a in anim_data if str(a["id"]) == str(user_data["anime_id"])), None)
+        if curr: start_ep = len(curr["qismlar"]) + 1
+
+    for i, vid in enumerate(user_data["temp_videos"]):
+        r_key = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+        db_data[r_key] = vid
+        random_map[r_key] = vid
+        ep_nom = f"{start_ep + i}-qism"
+        new_qismlar.append({"nom": ep_nom, "link": f"https://t.me/{bot.get_me().username}?start={r_key}"})
+
+    if user_data.get("exists"):
         for a in anim_data:
             if str(a["id"]) == str(user_data["anime_id"]):
                 a["qismlar"].extend(new_qismlar)
@@ -508,64 +404,42 @@ def finalize_multi_upload(message):
                 break
     else:
         a_id = f"a{int(time.time())}"
-        current_anime = {"id": a_id, "title": user_data["title"], "thumb": user_data["thumb"], "turkum": user_data["genre"], "qismlar": new_qismlar}
+        current_anime = {
+            "id": a_id, 
+            "title": user_data["title"], 
+            "thumb": user_data["thumb"], 
+            "turkum": user_data["genre"], 
+            "fullnews": user_data.get("fullnews", ""),
+            "qismlar": new_qismlar
+        }
         anim_data.append(current_anime)
 
     save_github(repo, db_contents, ANIMEID_PATH, db_data)
     save_github(repo, anim_contents, FILE_PATH, anim_data)
 
-    # --- KANALGA POST YUBORISH ---
     clean_title = re.sub(r",\{.*?\}", "", current_anime["title"]).split("📽")[0].strip()
-    genre_str = ", ".join(current_anime["turkum"])
-    
     caption = (
-        f"➤🎬Nomi: {clean_title}\n\n"
-        f"➤🎥 Qismlar soni: {len(current_anime['qismlar'])}\n"
-        f"➤🌍 Davlati: Yaponiya\n"
-        f"➤🇺🇿 Tili: O'zbek tilida\n"
-        f"➤📆 Yili: 2026\n"
-        f"➤🎞 Janri: {genre_str}\n\n"
-        f"Bot orqali ko'rish uchun pastdagi tugmani bosing 👇"
+        f"➤🎬 Nomi: {clean_title}\n"
+        f"➤🎥 Qismlar: {len(current_anime['qismlar'])}\n"
+        f"➤🎞 Janri: {', '.join(current_anime['turkum'])}\n\n"
+        f"{current_anime.get('fullnews', '')}\n\n"
+        f"Bot orqali ko'rish 👇"
     )
+    markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("📺 Tomosha qilish", url=f"https://t.me/{bot.get_me().username}/link?startapp={current_anime['id']}"))
     
-    post_markup = types.InlineKeyboardMarkup()
-    app_link = f"https://t.me/animeuzbektilida_afna_robot/link?startapp={current_anime['id']}"
-    post_markup.add(types.InlineKeyboardButton("📺 Tomosha qilish (Mini App)", url=app_link))
+    try: bot.send_photo(POST_CHANNEL_ID, current_anime["thumb"], caption=caption, reply_markup=markup)
+    except: bot.send_message(POST_CHANNEL_ID, caption, reply_markup=markup)
     
-    try:
-        if current_anime["thumb"].startswith("http"):
-            bot.send_photo(POST_CHANNEL_ID, current_anime["thumb"], caption=caption, reply_markup=post_markup)
-        else:
-            bot.send_message(POST_CHANNEL_ID, caption, reply_markup=post_markup)
-    except Exception as e:
-        print(f"Channel Post Error: {e}")
-
-    bot.send_message(message.chat.id, "✅ Jarayon muvaffaqiyatli yakunlandi va kanalga post joylandi!", reply_markup=main_menu())
+    bot.send_message(message.chat.id, "✅ Jarayon yakunlandi!", reply_markup=main_menu())
 
 def update_anime_field(message, field, data_list, repo, contents):
     val = upload_to_imgbb(message) if field == "thumb" else message.text
     for anime in data_list:
-        if str(anime["id"]) == str(user_data["edit_id"]): 
+        if str(anime["id"]) == str(user_data["edit_id"]):
             anime[field] = val
             break
     save_github(repo, contents, FILE_PATH, data_list)
     bot.send_message(message.chat.id, "✅ Yangilandi!", reply_markup=admin_menu())
-
-def update_title_sticker(message, data_list, repo, contents):
-    link = upload_to_imgbb(message)
-    if not link:
-        return bot.send_message(message.chat.id, "❌ Rasm yuklanmadi.")
-    for anime in data_list:
-        if str(anime["id"]) == str(user_data["edit_id"]):
-            title = anime["title"]
-            if ",{" in title:
-                new_title = re.sub(r",\{.*?\}", f",{{{link}}}", title)
-            else:
-                new_title = f"{title} ,{{{link}}}"
-            anime["title"] = new_title
-            break
-    save_github(repo, contents, FILE_PATH, data_list)
-    bot.send_message(message.chat.id, "✅ Title rasmi yangilandi!", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: True)
 def text_h(message):
@@ -573,36 +447,26 @@ def text_h(message):
         handle_start(message)
         return
 
-    # --- Kalit so'z bo'yicha qidiruv (Siz so'ragan funksiya) ---
     data_list, _ = get_github_content(FILE_PATH)
     for anime in data_list:
-        if "keyword" in anime and anime["keyword"].lower() == message.text.lower():
-            clean_title = re.sub(r",\{.*?\}", "", anime["title"]).split("📽")[0].strip()
-            genre_str = ", ".join(anime["turkum"])
-            
-            caption = (
-                f"➤🎬Nomi: {clean_title}\n\n"
-                f"➤🎥 Qismlar soni: {len(anime['qismlar'])}\n"
-                f"➤🎞 Janri: {genre_str}\n\n"
-                f"Qismlar:\n"
-            )
-            
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            btns = [types.InlineKeyboardButton(ep["nom"], url=ep["link"]) for ep in anime["qismlar"]]
-            markup.add(*btns)
-            # Ilova tugmasini ham qo'shamiz
-            app_link = f"https://t.me/animeuzbektilida_afna_robot/link?startapp={anime['id']}"
-            markup.add(types.InlineKeyboardButton("📺 Mini App-da ko'rish", url=app_link))
-
-            if anime["thumb"].startswith("http"):
-                bot.send_photo(message.chat.id, anime["thumb"], caption=caption, reply_markup=markup)
-            else:
-                bot.send_message(message.chat.id, caption, reply_markup=markup)
-            return
+        if "keyword" in anime:
+            keywords = [k.strip().lower() for k in anime["keyword"].split(",")]
+            if message.text.lower() in keywords:
+                clean_title = re.sub(r",\{.*?\}", "", anime["title"]).split("📽")[0].strip()
+                caption = f"➤🎬 Nomi: {clean_title}\n➤🎥 Qismlar: {len(anime['qismlar'])}\n\n{anime.get('fullnews', '')}"
+                markup = types.InlineKeyboardMarkup(row_width=2)
+                btns = [types.InlineKeyboardButton(ep["nom"], url=ep["link"]) for ep in anime["qismlar"]]
+                markup.add(*btns)
+                markup.add(types.InlineKeyboardButton("📺 Mini App", url=f"https://t.me/{bot.get_me().username}/link?startapp={anime['id']}"))
+                if anime["thumb"].startswith("http"):
+                    bot.send_photo(message.chat.id, anime["thumb"], caption=caption, reply_markup=markup)
+                else:
+                    bot.send_message(message.chat.id, caption, reply_markup=markup)
+                return
 
     if message.text == "📺 Anime ko'rish": 
         markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Ilova", web_app=types.WebAppInfo(MINI_APP_URL)))
-        bot.send_message(message.chat.id, "Mini App:", reply_markup=markup)
+        bot.send_message(message.chat.id, "Mini Appni ochish:", reply_markup=markup)
 
 load_all_ids()
 bot.infinity_polling()
