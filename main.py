@@ -10,6 +10,18 @@ import string
 import time
 import re 
 
+# --- TRANSLATE FUNKSIYASI ---
+def translate_text(text, src='en', dest='uz'):
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={src}&tl={dest}&dt=t&q={requests.utils.quote(text)}"
+        res = requests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            return data[0][0][0]
+        return text
+    except:
+        return text
+
 # --- SOZLAMALAR ---
 TOKEN = os.getenv("BOT_TOKEN")
 GH_TOKEN = os.getenv("GH_TOKEN")
@@ -104,11 +116,15 @@ def get_full_anime_info(image_url):
             clean_desc = re.sub('<[^<]+?>', '', info['description'])[:250] + "..."
             country = "Yaponiya" if info['countryOfOrigin'] == "JP" else info['countryOfOrigin']
             
+            # Tarjima qilinadigan qismlar:
+            uz_desc = translate_text(clean_desc, 'en', 'uz')
+            uz_genres = [translate_text(g, 'en', 'uz') for g in info['genres']]
+            
             full_text = (
                 f"➤🌍 Davlati: {country}\n"
                 f"➤📆 Chiqqan yili: {info['seasonYear']}\n"
-                f"➤🎞 Janrlar: {', '.join(info['genres'])}\n"
-                f"➤📝 Voqealar: {clean_desc}"
+                f"➤🎞 Janrlar: {', '.join(uz_genres)}\n"
+                f"➤📝 Voqealar: {uz_desc}"
             )
             return info['title']['romaji'] or info['title']['english'], full_text
     except:
@@ -351,15 +367,27 @@ def get_ai_result(message):
         if orig_name:
             user_data["title"] = f"{user_data['title']} 📽 | {orig_name}"
             user_data["fullnews"] = full_info
-            bot.send_message(message.chat.id, f"✅ Ma'lumotlar olindi!")
+            bot.send_message(message.chat.id, f"✅ Ma'lumotlar olindi va o'zbekchaga o'girildi!")
     ask_title_sticker(message)
 
 def ask_title_sticker(message):
-    msg = bot.send_message(message.chat.id, "Title ichidagi rasm yuboring yoki link kiriting:")
+    # GIF qidirish uchun anime nomini tayyorlash (bo'sh joylar o'rniga -)
+    search_q = user_data["title"].split('📽')[0].strip().replace(" ", "-")
+    tenor_url = f"https://tenor.com/uz/search/{search_q}?format=memes"
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🎨 GIF Tanlash", web_app=types.WebAppInfo(url=tenor_url)))
+    
+    msg = bot.send_message(message.chat.id, "Title ichidagi rasm linkini yuboring yoki GIF tanlang:", reply_markup=markup)
     bot.register_next_step_handler(msg, finalize_title_with_sticker)
 
 def finalize_title_with_sticker(message):
-    link = upload_to_imgbb(message)
+    link = None
+    if message.web_app_data:
+        link = message.web_app_data.data # Mini Appdan kelgan gif link
+    else:
+        link = upload_to_imgbb(message)
+        
     if link: user_data["title"] = f"{user_data['title']} ,{{{link}}}"
     user_data["temp_videos"] = []
     bot.send_message(message.chat.id, "Videolarni yuboring va /boldi deb yozing.")
