@@ -287,7 +287,7 @@ def callback_query(call):
                 user_data["short_ona_name"] = re.sub(r",\{.*?\}", "", a["title"]).split("📽")[0].strip()
                 break
         user_data["short_list"] = []
-        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring (Fayl, Insta/YT link yoki JSON list).\n\nTugatgach /boldi deb yozing:")
+        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring (Fayl, Link yoki JSON ro'yxat).\n\nTugatgach /boldi deb yozing:")
         bot.register_next_step_handler(msg, collect_shorts_multi)
 
     elif call.data == "manage_admins":
@@ -410,36 +410,36 @@ def collect_shorts_multi(message):
         finalize_shorts_upload(message)
         return
 
-    # 1. Fayl bo'lsa
+    # 1. Video yoki Hujjat (Fayl) bo'lsa
     if message.video or message.document:
         process_short_file(message)
 
-    # 2. Text bo'lsa (Link yoki JSON list)
+    # 2. Matn bo'lsa (JSON list yoki Oddiy Link)
     elif message.text:
-        text = message.text.strip()
+        raw_text = message.text.strip()
         
-        # Agar JSON formatdagi list bo'lsa
-        if text.startswith("[") and text.endswith("]"):
+        # JSON formatdagi linklar ro'yxati ekanligini tekshirish
+        if raw_text.startswith("[") and raw_text.endswith("]"):
             try:
-                links = json.loads(text)
+                links = json.loads(raw_text)
                 if isinstance(links, list):
-                    bot.send_message(message.chat.id, f"📦 JSON formatda {len(links)} ta link aniqlandi. Yuklash boshlanmoqda...")
-                    for l in links:
-                        process_short_link(message, l)
+                    bot.send_message(message.chat.id, f"📦 JSON formatda {len(links)} ta link topildi. Navbat bilan yuklanmoqda...")
+                    for single_link in links:
+                        process_short_link(message, single_link.strip())
                 else:
-                    bot.send_message(message.chat.id, "❌ JSON list formatda emas.")
+                    bot.send_message(message.chat.id, "❌ JSON list formatida emas.")
             except:
-                bot.send_message(message.chat.id, "❌ JSON formatida xatolik.")
+                bot.send_message(message.chat.id, "❌ JSON tahlilida xatolik yuz berdi.")
         
-        # Agar bitta oddiy link bo'lsa
-        elif text.startswith("http"):
-            process_short_link(message, text)
+        # Bitta oddiy link bo'lsa
+        elif raw_text.startswith("http"):
+            process_short_link(message, raw_text)
 
     bot.register_next_step_handler(message, collect_shorts_multi)
 
 def process_short_file(message):
     file_id = message.video.file_id if message.video else message.document.file_id
-    bot.send_message(message.chat.id, "⏳ Fayl Wistiaga yuklanmoqda...")
+    bot.send_message(message.chat.id, "⏳ Fayl Wistiaga yuborilmoqda...")
     file_info = bot.get_file(file_id)
     file_bytes = bot.download_file(file_info.file_path)
     hashed_id = upload_video_to_wistia(file_bytes)
@@ -456,31 +456,34 @@ def process_short_link(message, link):
         hashed_id = upload_video_to_wistia(video_bytes)
         if hashed_id:
             user_data["short_list"].append(hashed_id)
-            bot.send_message(message.chat.id, f"✅ Muvaffaqiyatli: {link}")
+            bot.send_message(message.chat.id, f"✅ Tayyor: {link}")
         else:
-            bot.send_message(message.chat.id, f"❌ Wistia xatosi: {link}")
+            bot.send_message(message.chat.id, f"❌ Wistia xatosi (link): {link}")
     else:
-        bot.send_message(message.chat.id, f"❌ Linkdan yuklab bo'lmadi: {link}")
+        bot.send_message(message.chat.id, f"❌ Linkdan videoni olib bo'lmadi: {link}")
 
 def download_from_link(link):
-    """Linkdan video yuklab olish (YouTube, Insta, etc)"""
+    """Linkdan video yuklab olish (YouTube, Insta, etc) - Optimallashtirilgan"""
     try:
         ydl_opts = {
             'format': 'best',
             'outtmpl': 'temp_video.mp4',
             'quiet': True,
-            'no_warnings': True
+            'no_warnings': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'referer': 'https://www.google.com/'
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([link])
         
-        with open('temp_video.mp4', 'rb') as f:
-            data = f.read()
-        os.remove('temp_video.mp4')
-        return data
+        if os.path.exists('temp_video.mp4'):
+            with open('temp_video.mp4', 'rb') as f:
+                data = f.read()
+            os.remove('temp_video.mp4')
+            return data
     except Exception as e:
         print(f"DL Error: {e}")
-        return None
+    return None
 
 def upload_video_to_wistia(file_bytes):
     """Wistiaga yuklash"""
