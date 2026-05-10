@@ -463,15 +463,15 @@ def process_short_link(message, link):
         bot.send_message(message.chat.id, f"❌ Linkdan videoni olib bo'lmadi: {link}")
 
 def download_from_link(link):
-    """Linkdan video yuklab olish (YouTube, Insta, etc) - Optimallashtirilgan"""
+    """Linkdan video yuklab olish (YouTube cookies bilan)"""
     try:
         ydl_opts = {
             'format': 'best',
             'outtmpl': 'temp_video.mp4',
             'quiet': True,
             'no_warnings': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'referer': 'https://www.google.com/'
+            'cookiefile': 'cookies.txt',  # Papkadagi cookies fayli
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([link])
