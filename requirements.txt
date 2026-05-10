@@ -1,4 +1,4 @@
 pyTelegramBotAPI
 PyGithub
 requests
-yt_dlp
+yt-dlp
