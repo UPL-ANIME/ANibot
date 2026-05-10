@@ -27,6 +27,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 GH_TOKEN = os.getenv("GH_TOKEN")
 REPO_NAME = "UPL-ANIME/annn"
 FILE_PATH = "anim.json"
+SHORT_PATH = "short.json"
+WEB_SETTINGS_PATH = "wepset.json"
 ANIMEID_PATH = "animeid.json"
 CHANNELS_PATH = "channels.json"
 ADMINS_PATH = "admins.json" 
@@ -34,6 +36,7 @@ ADMIN_ID = 5297746319
 MINI_APP_URL = "https://upl-anime.github.io/TGteganime/"
 IMGBB_API_KEY = "4370f5ebb3ad2302e03c1638b2ccb8c2"
 POST_CHANNEL_ID = "@uzbekchaanimelarafna"
+WISTIA_API_KEY = "93fce19521210fa554aa4ac475a39e55066b539df4a44490d39d6a118b7c4f8b"
 
 GENRES = ["Sarguzasht", "Fantaziya", "Romantika", "Drama", "Komediya", "Isekai", "Psixologik", "Horror", "Hayotiy", "Sport", "Magik"]
 
@@ -57,6 +60,8 @@ def get_github_content(path):
     except Exception as e:
         print(f"({path}): {e}")
         if path == FILE_PATH: return [], None
+        if path == SHORT_PATH: return [], None
+        if path == WEB_SETTINGS_PATH: return {"name": "AFNA", "logo": ""}, None
         if path == CHANNELS_PATH: return {"tg": [], "insta": ""}, None
         if path == ADMINS_PATH: return [ADMIN_ID, 6448946979], None
         return {}, None
@@ -116,7 +121,6 @@ def get_full_anime_info(image_url):
             clean_desc = re.sub('<[^<]+?>', '', info['description'])[:250] + "..."
             country = "Yaponiya" if info['countryOfOrigin'] == "JP" else info['countryOfOrigin']
             
-            # Tarjima qilinadigan qismlar:
             uz_desc = translate_text(clean_desc, 'en', 'uz')
             uz_genres = [translate_text(g, 'en', 'uz') for g in info['genres']]
             
@@ -163,6 +167,8 @@ def admin_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("➕ Yangi qism qo'shish", callback_data="add_anime"),
+        types.InlineKeyboardButton("🎥 Shorts yuklash", callback_data="add_shorts"),
+        types.InlineKeyboardButton("🌐 Web App sozlamalari", callback_data="web_settings"),
         types.InlineKeyboardButton("⚙️ Animelarni tahrirlash", callback_data="manage_anime"),
         types.InlineKeyboardButton("📢 Majburiy obuna sozalamalari", callback_data="sub_settings"),
         types.InlineKeyboardButton("👑 Adminlarni boshqarish", callback_data="manage_admins"),
@@ -215,7 +221,10 @@ def handle_start(message):
             try: bot.send_video(message.chat.id, file_id, caption=caption_text)
             except: bot.send_document(message.chat.id, file_id, caption=caption_text)
         return
-    bot.send_message(message.chat.id, "Xush kelibsiz!", reply_markup=main_menu())
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🚀 Ilovani ochish", web_app=types.WebAppInfo(MINI_APP_URL)))
+    bot.send_message(message.chat.id, "Xush kelibsiz! Anime ko'rish uchun quyidagi tugmani bosing:", reply_markup=markup)
 
 @bot.message_handler(commands=['admin'])
 def handle_admin(message):
@@ -244,7 +253,9 @@ def callback_query(call):
                 if file_id:
                     try: bot.send_video(call.message.chat.id, file_id)
                     except: bot.send_document(call.message.chat.id, file_id)
-            bot.send_message(call.message.chat.id, "Xush kelibsiz!", reply_markup=main_menu())
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🚀 Ilovani ochish", web_app=types.WebAppInfo(MINI_APP_URL)))
+            bot.send_message(call.message.chat.id, "Xush kelibsiz!", reply_markup=markup)
         else:
             bot.answer_callback_query(call.id, "Hali hamma kanallarga a'zo emassiz!", show_alert=True)
         return
@@ -254,6 +265,28 @@ def callback_query(call):
     
     if call.data == "back_to_admin":
         bot.edit_message_text("Admin panel", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
+
+    elif call.data == "web_settings":
+        web_data, _ = get_github_content(WEB_SETTINGS_PATH)
+        text = f"🌐 Web App Sozlamalari:\n\nNomi: {web_data['name']}\nLogo: {web_data['logo']}"
+        msg = bot.send_message(call.message.chat.id, f"{text}\n\nYangi nom kiriting yoki yangi rasm yuboring:")
+        bot.register_next_step_handler(msg, update_web_settings)
+
+    elif call.data == "add_shorts":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for anime in data_list[-15:]:
+            markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"shortona_{anime['id']}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
+        bot.edit_message_text("Shorts uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("shortona_"):
+        user_data["short_ona_id"] = call.data.split("_")[1]
+        for a in data_list:
+            if str(a["id"]) == str(user_data["short_ona_id"]):
+                user_data["short_ona_name"] = re.sub(r",\{.*?\}", "", a["title"]).split("📽")[0].strip()
+                break
+        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts videosini yuboring:")
+        bot.register_next_step_handler(msg, upload_shorts_video)
 
     elif call.data == "manage_admins":
         admins, _ = get_github_content(ADMINS_PATH)
@@ -349,6 +382,61 @@ def callback_query(call):
         bot.send_message(call.message.chat.id, "Videolarni yuboring. Tugatgach /boldi deb yozing.")
         bot.register_next_step_handler(call.message, collect_multi_videos)
 
+# --- WEB SETTINGS ---
+def update_web_settings(message):
+    repo = g.get_repo(REPO_NAME)
+    web_data, web_contents = get_github_content(WEB_SETTINGS_PATH)
+    
+    if message.photo:
+        link = upload_to_imgbb(message)
+        if link:
+            web_data["logo"] = link
+            bot.send_message(message.chat.id, "✅ Logo o'zgartirildi!")
+    elif message.text:
+        web_data["name"] = message.text
+        bot.send_message(message.chat.id, "✅ Nom o'zgartirildi!")
+    
+    save_github(repo, web_contents, WEB_SETTINGS_PATH, web_data)
+    bot.send_message(message.chat.id, "Admin panel", reply_markup=admin_menu())
+
+# --- SHORTS MANTIQI ---
+def upload_shorts_video(message):
+    if not (message.video or message.document):
+        bot.send_message(message.chat.id, "Iltimos video yuboring!")
+        return
+    
+    bot.send_message(message.chat.id, "⏳ Shorts Wistiaga yuklanmoqda...")
+    file_id = message.video.file_id if message.video else message.document.file_id
+    file_info = bot.get_file(file_id)
+    file_bytes = bot.download_file(file_info.file_path)
+    
+    try:
+        url = "https://upload.wistia.com/"
+        params = {"api_password": WISTIA_API_KEY}
+        files = {"file": (f"short_{int(time.time())}.mp4", file_bytes, "video/mp4")}
+        res = requests.post(url, params=params, files=files)
+        
+        if res.status_code == 200:
+            w_data = res.json()
+            hashed_id = w_data["hashed_id"]
+            
+            repo = g.get_repo(REPO_NAME)
+            shorts_data, shorts_contents = get_github_content(SHORT_PATH)
+            
+            new_short = {
+                "nom": user_data["short_ona_name"],
+                "link": hashed_id,
+                "ona": user_data["short_ona_id"]
+            }
+            shorts_data.append(new_short)
+            save_github(repo, shorts_contents, SHORT_PATH, shorts_data)
+            
+            bot.send_message(message.chat.id, f"✅ Shorts muvaffaqiyatli yuklandi!\nHashed ID: {hashed_id}")
+        else:
+            bot.send_message(message.chat.id, f"❌ Wistia xatosi: {res.text}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Xatolik yuz berdi: {e}")
+
 # --- QADAMMA-QADAM MANTIQ ---
 def get_new_title(message):
     user_data["title"] = message.text
@@ -371,7 +459,6 @@ def get_ai_result(message):
     ask_title_sticker(message)
 
 def ask_title_sticker(message):
-    # GIF qidirish uchun anime nomini tayyorlash (bo'sh joylar o'rniga -)
     search_q = user_data["title"].split('📽')[0].strip().replace(" ", "-")
     tenor_url = f"https://tenor.com/uz/search/{search_q}?format=memes"
     
@@ -384,7 +471,7 @@ def ask_title_sticker(message):
 def finalize_title_with_sticker(message):
     link = None
     if message.web_app_data:
-        link = message.web_app_data.data # Mini Appdan kelgan gif link
+        link = message.web_app_data.data 
     else:
         link = upload_to_imgbb(message)
         
@@ -493,7 +580,7 @@ def text_h(message):
                 return
 
     if message.text == "📺 Anime ko'rish": 
-        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Ilova", web_app=types.WebAppInfo(MINI_APP_URL)))
+        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚀 Ilovani ochish", web_app=types.WebAppInfo(MINI_APP_URL)))
         bot.send_message(message.chat.id, "Mini Appni ochish:", reply_markup=markup)
 
 load_all_ids()
