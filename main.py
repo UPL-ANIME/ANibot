@@ -287,7 +287,7 @@ def callback_query(call):
                 user_data["short_ona_name"] = re.sub(r",\{.*?\}", "", a["title"]).split("📽")[0].strip()
                 break
         user_data["short_list"] = []
-        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring (Fayl yoki Insta/YT link).\n\nTugatgach /boldi deb yozing:")
+        msg = bot.send_message(call.message.chat.id, f"🎬 {user_data['short_ona_name']} uchun shorts yuboring (Fayl, Insta/YT link yoki JSON list).\n\nTugatgach /boldi deb yozing:")
         bot.register_next_step_handler(msg, collect_shorts_multi)
 
     elif call.data == "manage_admins":
@@ -410,35 +410,57 @@ def collect_shorts_multi(message):
         finalize_shorts_upload(message)
         return
 
-    # Fayl bo'lsa
+    # 1. Fayl bo'lsa
     if message.video or message.document:
-        file_id = message.video.file_id if message.video else message.document.file_id
-        bot.send_message(message.chat.id, "⏳ Video Wistiaga yuklanmoqda...")
-        file_info = bot.get_file(file_id)
-        file_bytes = bot.download_file(file_info.file_path)
-        hashed_id = upload_video_to_wistia(file_bytes)
-        if hashed_id:
-            user_data["short_list"].append(hashed_id)
-            bot.send_message(message.chat.id, f"✅ Fayl yuklandi. Jami: {len(user_data['short_list'])}")
-        else:
-            bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
+        process_short_file(message)
 
-    # Link bo'lsa (Insta/YT)
-    elif message.text and message.text.startswith("http"):
-        bot.send_message(message.chat.id, "⏳ Linkdan video yuklab olinmoqda...")
-        video_bytes = download_from_link(message.text)
-        if video_bytes:
-            bot.send_message(message.chat.id, "⏳ Wistiaga o'tkazilmoqda...")
-            hashed_id = upload_video_to_wistia(video_bytes)
-            if hashed_id:
-                user_data["short_list"].append(hashed_id)
-                bot.send_message(message.chat.id, f"✅ Link yuklandi. Jami: {len(user_data['short_list'])}")
-            else:
-                bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
-        else:
-            bot.send_message(message.chat.id, "❌ Linkdan yuklab bo'lmadi (Noto'g'ri link yoki xizmat band).")
+    # 2. Text bo'lsa (Link yoki JSON list)
+    elif message.text:
+        text = message.text.strip()
+        
+        # Agar JSON formatdagi list bo'lsa
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                links = json.loads(text)
+                if isinstance(links, list):
+                    bot.send_message(message.chat.id, f"📦 JSON formatda {len(links)} ta link aniqlandi. Yuklash boshlanmoqda...")
+                    for l in links:
+                        process_short_link(message, l)
+                else:
+                    bot.send_message(message.chat.id, "❌ JSON list formatda emas.")
+            except:
+                bot.send_message(message.chat.id, "❌ JSON formatida xatolik.")
+        
+        # Agar bitta oddiy link bo'lsa
+        elif text.startswith("http"):
+            process_short_link(message, text)
 
     bot.register_next_step_handler(message, collect_shorts_multi)
+
+def process_short_file(message):
+    file_id = message.video.file_id if message.video else message.document.file_id
+    bot.send_message(message.chat.id, "⏳ Fayl Wistiaga yuklanmoqda...")
+    file_info = bot.get_file(file_id)
+    file_bytes = bot.download_file(file_info.file_path)
+    hashed_id = upload_video_to_wistia(file_bytes)
+    if hashed_id:
+        user_data["short_list"].append(hashed_id)
+        bot.send_message(message.chat.id, f"✅ Fayl yuklandi. Jami: {len(user_data['short_list'])}")
+    else:
+        bot.send_message(message.chat.id, "❌ Wistia yuklashda xato.")
+
+def process_short_link(message, link):
+    bot.send_message(message.chat.id, f"⏳ Yuklanmoqda: {link}")
+    video_bytes = download_from_link(link)
+    if video_bytes:
+        hashed_id = upload_video_to_wistia(video_bytes)
+        if hashed_id:
+            user_data["short_list"].append(hashed_id)
+            bot.send_message(message.chat.id, f"✅ Muvaffaqiyatli: {link}")
+        else:
+            bot.send_message(message.chat.id, f"❌ Wistia xatosi: {link}")
+    else:
+        bot.send_message(message.chat.id, f"❌ Linkdan yuklab bo'lmadi: {link}")
 
 def download_from_link(link):
     """Linkdan video yuklab olish (YouTube, Insta, etc)"""
@@ -636,4 +658,3 @@ def text_h(message):
 
 load_all_ids()
 bot.infinity_polling()
-
