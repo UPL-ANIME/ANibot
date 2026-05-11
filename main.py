@@ -37,7 +37,7 @@ ADMIN_ID = 5297746319
 MINI_APP_URL = "https://upl-anime.github.io/TGteganime/"
 IMGBB_API_KEY = "4370f5ebb3ad2302e03c1638b2ccb8c2"
 POST_CHANNEL_ID = "@uzbekchaanimelarafna"
-WISTIA_API_KEY = "93fce19521210fa554aa4ac475a39e55066b539df4a44490d39d6a118b7c4f8b"
+WISTIA_API_KEY = "d8618bedf2489db649126aae9d9e83093d24b25830dd965ce791ec1a29a1c9ff"
 
 GENRES = ["Sarguzasht", "Fantaziya", "Romantika", "Drama", "Komediya", "Isekai", "Psixologik", "Horror", "Hayotiy", "Sport", "Magik"]
 
