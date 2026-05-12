@@ -308,8 +308,10 @@ def callback_query(call):
         udata["exists"] = True
         udata["anime_id"] = call.data.split("_")[1]
         udata["temp_videos"] = []
-        bot.send_message(call.message.chat.id, "Videolarni ketma-ket yuboring. Tugatgach /boldi deb yozing.")
-        bot.register_next_step_handler(call.message, collect_multi_videos)
+        target = next((a for a in data_list if str(a["id"]) == str(udata["anime_id"])), None)
+        current_count = len(target["qismlar"]) if target else 0
+        msg = bot.send_message(call.message.chat.id, f"Bu animeda {current_count} ta qism bor.\n\nYangi qismlar nechanchidan boshlab raqamlansin? (Masalan: {current_count + 1})")
+        bot.register_next_step_handler(msg, set_start_episode_index)
 
     elif call.data.startswith("shortona_"):
         udata["short_ona_id"] = call.data.split("_")[1]
@@ -403,10 +405,22 @@ def callback_query(call):
         udata["exists"] = True
         udata["anime_id"] = call.data.split("_")[1]
         udata["temp_videos"] = []
-        bot.send_message(call.message.chat.id, "Videolarni yuboring. Tugatgach /boldi deb yozing.")
-        bot.register_next_step_handler(call.message, collect_multi_videos)
+        target = next((a for a in data_list if str(a["id"]) == str(udata["anime_id"])), None)
+        current_count = len(target["qismlar"]) if target else 0
+        msg = bot.send_message(call.message.chat.id, f"Bu animeda {current_count} ta qism bor.\n\nYangi qismlar nechanchidan boshlab raqamlansin? (Masalan: {current_count + 1})")
+        bot.register_next_step_handler(msg, set_start_episode_index)
 
 # --- FUNKSIYALARNING DAVOMI ---
+def set_start_episode_index(message):
+    udata = get_user_step_data(message.from_user.id)
+    try:
+        udata["manual_start_index"] = int(message.text)
+        bot.send_message(message.chat.id, f"Tushunarli! Qismlar {udata['manual_start_index']}-qismdan boshlab raqamlanadi. Videolarni yuboring va /boldi deb yozing.")
+        bot.register_next_step_handler(message, collect_multi_videos)
+    except:
+        bot.send_message(message.chat.id, "Faqat son kiriting!")
+        bot.register_next_step_handler(message, set_start_episode_index)
+
 def update_web_settings(message):
     repo = g.get_repo(REPO_NAME)
     web_data, web_contents = get_github_content(WEB_SETTINGS_PATH)
@@ -480,14 +494,17 @@ def finalize_shorts_upload(message):
     udata = get_user_step_data(user_id)
     repo = g.get_repo(REPO_NAME)
     shorts_data, shorts_contents = get_github_content(SHORT_PATH)
+    
+    # Ma'lumotlarni to'g'ri qo'shish (umrbod va nol bo'lmasligi uchun)
     for item in udata["short_list"]:
         shorts_data.append({
             "nom": udata["short_ona_name"],
             "link": item,
             "ona": udata["short_ona_id"]
         })
+    
     save_github(repo, shorts_contents, SHORT_PATH, shorts_data)
-    bot.send_message(message.chat.id, "✅ Shorts saqlandi!", reply_markup=admin_menu())
+    bot.send_message(message.chat.id, f"✅ {len(udata['short_list'])} ta shorts muvaffaqiyatli saqlandi!", reply_markup=admin_menu())
 
 def get_new_title(message):
     udata = get_user_step_data(message.from_user.id)
@@ -525,6 +542,7 @@ def finalize_title_with_sticker(message):
     link = upload_to_imgbb(message)
     if link: udata["title"] = f"{udata['title']} ,{{{link}}}"
     udata["temp_videos"] = []
+    udata["manual_start_index"] = 1
     bot.send_message(message.chat.id, "Videolarni yuboring va /boldi deb yozing.")
     bot.register_next_step_handler(message, collect_multi_videos)
 
@@ -539,7 +557,7 @@ def collect_multi_videos(message):
     if message.video or message.document:
         vid = message.video.file_id if message.video else message.document.file_id
         udata["temp_videos"].append(vid)
-        bot.send_message(message.chat.id, f"📥 {len(udata['temp_videos'])}-qism qabul qilindi.")
+        bot.send_message(message.chat.id, f"📥 {len(udata['temp_videos'])}-qabul qilindi.")
     bot.register_next_step_handler(message, collect_multi_videos)
 
 def finalize_multi_upload(message):
@@ -550,10 +568,7 @@ def finalize_multi_upload(message):
     anim_data, anim_contents = get_github_content(FILE_PATH)
     
     new_qismlar = []
-    start_ep = 1
-    if udata.get("exists"):
-        curr = next((a for a in anim_data if str(a["id"]) == str(udata["anime_id"])), None)
-        if curr: start_ep = len(curr["qismlar"]) + 1
+    start_ep = udata.get("manual_start_index", 1)
 
     for i, vid in enumerate(udata["temp_videos"]):
         r_key = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
