@@ -181,6 +181,7 @@ def admin_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("➕ Yangi qism qo'shish", callback_data="add_anime"),
+        types.InlineKeyboardButton("📤 Direkt qismlar qo'shish", callback_data="add_direct"),
         types.InlineKeyboardButton("🎥 Shorts yuklash", callback_data="add_shorts"),
         types.InlineKeyboardButton("🌐 Web App sozlamalari", callback_data="web_settings"),
         types.InlineKeyboardButton("⚙️ Animelarni tahrirlash", callback_data="manage_anime"),
@@ -295,6 +296,20 @@ def callback_query(call):
             markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"shortona_{anime['id']}"))
         markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
         bot.edit_message_text("Shorts uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "add_direct":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for anime in data_list[-15:]:
+            markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"direkt_{anime['id']}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
+        bot.edit_message_text("Qism qo'shish uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("direkt_"):
+        udata["exists"] = True
+        udata["anime_id"] = call.data.split("_")[1]
+        udata["temp_videos"] = []
+        bot.send_message(call.message.chat.id, "Videolarni ketma-ket yuboring. Tugatgach /boldi deb yozing.")
+        bot.register_next_step_handler(call.message, collect_multi_videos)
 
     elif call.data.startswith("shortona_"):
         udata["short_ona_id"] = call.data.split("_")[1]
