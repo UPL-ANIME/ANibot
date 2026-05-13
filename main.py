@@ -45,11 +45,15 @@ auth = Auth.Token(GH_TOKEN)
 g = Github(auth=auth)
 bot = telebot.TeleBot(TOKEN)
 
+# Multi-user support uchun user_data'ni lug'at ko'rinishida saqlaymiz
 user_data = {}
 random_map = {}
 last_sticker_link = None
+
+# Tugmani qayta-qayta bosishdan himoya (Antiflood)
 last_click = {}
 
+# Har bir user uchun data ob'ektini yaratish yordamchisi
 def get_user_step_data(user_id):
     if user_id not in user_data:
         user_data[user_id] = {
@@ -298,7 +302,7 @@ def callback_query(call):
         for anime in data_list[-15:]:
             markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"direkt_{anime['id']}"))
         markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
-        bot.edit_message_text("Direkt qismlar uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.edit_message_text("Qism qo'shish uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif call.data.startswith("direkt_"):
         udata["exists"] = True
@@ -306,7 +310,7 @@ def callback_query(call):
         udata["temp_links"] = []
         target = next((a for a in data_list if str(a["id"]) == str(udata["anime_id"])), None)
         current_count = len(target["qismlar"]) if target else 0
-        msg = bot.send_message(call.message.chat.id, f"Bu animeda {current_count} ta qism bor.\n\nDirekt linklar nechanchidan boshlab raqamlansin? (Masalan: {current_count + 1})")
+        msg = bot.send_message(call.message.chat.id, f"Bu animeda {current_count} ta qism bor.\n\nYangi qismlar nechanchidan boshlab raqamlansin? (Masalan: {current_count + 1})")
         bot.register_next_step_handler(msg, set_start_direct_index)
 
     elif call.data.startswith("shortona_"):
@@ -406,12 +410,12 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, f"Bu animeda {current_count} ta qism bor.\n\nYangi qismlar nechanchidan boshlab raqamlansin? (Masalan: {current_count + 1})")
         bot.register_next_step_handler(msg, set_start_episode_index)
 
-# --- DIREKT LINK LOGIKASI ---
+# --- DIREKT LINK FUNKSIYALARI ---
 def set_start_direct_index(message):
     udata = get_user_step_data(message.from_user.id)
     try:
         udata["manual_start_index"] = int(message.text)
-        bot.send_message(message.chat.id, f"Direkt linkli xabarlarni bittada tashlang. Bot 'WATCH :' qismidagi linklarni avtomatik oladi. Tugatgach /boldi deb yozing.")
+        bot.send_message(message.chat.id, "Xabarlarni tashlang. 'WATCH :' yonidagi linklar olinadi. /boldi deb yakunlang.")
         bot.register_next_step_handler(message, collect_direct_links_multi)
     except:
         bot.send_message(message.chat.id, "Faqat son kiriting!")
@@ -421,20 +425,15 @@ def collect_direct_links_multi(message):
     udata = get_user_step_data(message.from_user.id)
     if message.text == "/boldi":
         if not udata.get("temp_links"):
-            bot.send_message(message.chat.id, "Hech qanday link topilmadi!")
+            bot.send_message(message.chat.id, "Link topilmadi!")
             return
         finalize_direct_upload(message)
         return
-
     if message.text:
-        # Regex orqali "WATCH :" dan keyingi linkni qidirish
-        found_links = re.findall(r"WATCH\s*:\s*(https?://[^\s\n]+)", message.text)
-        if found_links:
-            udata.setdefault("temp_links", []).extend(found_links)
-            bot.send_message(message.chat.id, f"✅ {len(found_links)} ta link aniqlandi. Jami: {len(udata['temp_links'])}")
-        else:
-            bot.send_message(message.chat.id, "⚠️ Bu xabarda 'WATCH :' formati topilmadi.")
-
+        found = re.findall(r"WATCH\s*:\s*(https?://[^\s\n]+)", message.text)
+        if found:
+            udata.setdefault("temp_links", []).extend(found)
+            bot.send_message(message.chat.id, f"✅ {len(found)} ta link qo'shildi.")
     bot.register_next_step_handler(message, collect_direct_links_multi)
 
 def finalize_direct_upload(message):
@@ -448,7 +447,13 @@ def finalize_direct_upload(message):
 
     for i, link in enumerate(udata["temp_links"]):
         ep_nom = f"{start_ep + i}-qism"
-        new_qismlar.append({"nom": ep_nom, "link": link.strip()})
+        r_key = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+        # Yangi format: linkvideo - to'g'ridan to'g'ri link, link - telegram start linki
+        new_qismlar.append({
+            "nom": ep_nom, 
+            "linkvideo": link.strip(),
+            "link": f"https://t.me/{bot.get_me().username}?start={r_key}"
+        })
 
     for a in anim_data:
         if str(a["id"]) == str(udata["anime_id"]):
@@ -456,7 +461,7 @@ def finalize_direct_upload(message):
             break
     
     save_github(repo, anim_contents, FILE_PATH, anim_data)
-    bot.send_message(message.chat.id, f"✅ {len(new_qismlar)} ta direkt qism muvaffaqiyatli qo'shildi!", reply_markup=admin_menu())
+    bot.send_message(message.chat.id, "✅ Direkt qismlar yangi formatda saqlandi!", reply_markup=admin_menu())
 
 # --- QOLGAN FUNKSIYALAR ---
 def set_start_episode_index(message):
@@ -543,6 +548,7 @@ def finalize_shorts_upload(message):
     repo = g.get_repo(REPO_NAME)
     shorts_data, shorts_contents = get_github_content(SHORT_PATH)
     
+    # Ma'lumotlarni to'g'ri qo'shish (umrbod va nol bo'lmasligi uchun)
     for item in udata["short_list"]:
         shorts_data.append({
             "nom": udata["short_ona_name"],
