@@ -181,7 +181,7 @@ def admin_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("➕ Yangi qism qo'shish", callback_data="add_anime"),
-        types.InlineKeyboardButton("📤 Direkt qismlar qo'shish", callback_data="add_direct"),
+        types.InlineKeyboardButton("📤 Direkt qismlar qo'shish", callback_data="add_direct_main"),
         types.InlineKeyboardButton("🎥 Shorts yuklash", callback_data="add_shorts"),
         types.InlineKeyboardButton("🌐 Web App sozlamalari", callback_data="web_settings"),
         types.InlineKeyboardButton("⚙️ Animelarni tahrirlash", callback_data="manage_anime"),
@@ -284,6 +284,60 @@ def callback_query(call):
     if call.data == "back_to_admin":
         bot.edit_message_text("Admin panel", call.message.chat.id, call.message.message_id, reply_markup=admin_menu())
 
+    elif call.data == "add_direct_main":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📥 Oddiy yuklash (Anime tanlash)", callback_data="add_direct_simple"),
+            types.InlineKeyboardButton("📄 JSON formatda yuklash", callback_data="add_direct_json"),
+            types.InlineKeyboardButton("⚙️ Linklarni boshqarish", callback_data="manage_direct_links"),
+            types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin")
+        )
+        bot.edit_message_text("Direkt linklarni qo'shish uslubini tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "add_direct_simple":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for anime in data_list[-15:]:
+            markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"direkt_{anime['id']}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="add_direct_main"))
+        bot.edit_message_text("Qism qo'shish uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "add_direct_json":
+        msg = bot.send_message(call.message.chat.id, "JSON formatni tashlang:\n\n`{\"nom\":[son]}`")
+        bot.register_next_step_handler(msg, process_direct_json_input)
+
+    elif call.data == "manage_direct_links":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for anime in data_list:
+            direct_count = sum(1 for q in anime.get("qismlar", []) if "linkvideo" in q)
+            if direct_count > 0:
+                markup.add(types.InlineKeyboardButton(f"{anime['title']} ({direct_count} ta)", callback_data=f"man_dir_{anime['id']}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="add_direct_main"))
+        bot.edit_message_text("Linklarni boshqarish uchun animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("man_dir_"):
+        udata["anime_id"] = call.data.split("_")[2]
+        target = next((a for a in data_list if str(a["id"]) == str(udata["anime_id"])), None)
+        if target:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for i, q in enumerate(target["qismlar"]):
+                if "linkvideo" in q:
+                    markup.add(types.InlineKeyboardButton(f"❌ {q['nom']}", callback_data=f"del_dir_{udata['anime_id']}_{i}"))
+            markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="manage_direct_links"))
+            bot.edit_message_text(f"{target['title']} qismlari:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("del_dir_"):
+        _, _, a_id, idx = call.data.split("_")
+        idx = int(idx)
+        for a in data_list:
+            if str(a["id"]) == str(a_id):
+                a["qismlar"].pop(idx)
+                break
+        save_github(repo, contents, FILE_PATH, data_list)
+        bot.answer_callback_query(call.id, "O'chirildi!")
+        # Menuni yangilash uchun qayta chaqiramiz
+        call.data = f"man_dir_{a_id}"
+        callback_query(call)
+
     elif call.data == "web_settings":
         web_data, _ = get_github_content(WEB_SETTINGS_PATH)
         text = f"🌐 Web App Sozlamalari:\n\nNomi: {web_data['name']}\nLogo: {web_data['logo']}"
@@ -296,13 +350,6 @@ def callback_query(call):
             markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"shortona_{anime['id']}"))
         markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
         bot.edit_message_text("Shorts uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    elif call.data == "add_direct":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for anime in data_list[-15:]:
-            markup.add(types.InlineKeyboardButton(anime["title"], callback_data=f"direkt_{anime['id']}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_admin"))
-        bot.edit_message_text("Qism qo'shish uchun ona animeni tanlang:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif call.data.startswith("direkt_"):
         udata["exists"] = True
@@ -448,7 +495,6 @@ def finalize_direct_upload(message):
     for i, link in enumerate(udata["temp_links"]):
         ep_nom = f"{start_ep + i}-qism"
         r_key = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-        # Yangi format: linkvideo - to'g'ridan to'g'ri link, link - telegram start linki
         new_qismlar.append({
             "nom": ep_nom, 
             "linkvideo": link.strip(),
@@ -462,6 +508,62 @@ def finalize_direct_upload(message):
     
     save_github(repo, anim_contents, FILE_PATH, anim_data)
     bot.send_message(message.chat.id, "✅ Direkt qismlar yangi formatda saqlandi!", reply_markup=admin_menu())
+
+# --- JSON BULK UPLOAD ---
+def process_direct_json_input(message):
+    try:
+        udata = get_user_step_data(message.from_user.id)
+        udata["bulk_json"] = json.loads(message.text)
+        udata["bulk_links"] = []
+        bot.send_message(message.chat.id, "JSON qabul qilindi. Endi barcha linklarni ketma-ket yuboring va /boldi deb yozing.")
+        bot.register_next_step_handler(message, collect_bulk_links)
+    except:
+        bot.send_message(message.chat.id, "Xato! JSON formatini tekshiring.")
+
+def collect_bulk_links(message):
+    udata = get_user_step_data(message.from_user.id)
+    if message.text == "/boldi":
+        finalize_bulk_direct(message)
+        return
+    if message.text:
+        found = re.findall(r"WATCH\s*:\s*(https?://[^\s\n]+)", message.text)
+        if found:
+            udata["bulk_links"].extend(found)
+            bot.send_message(message.chat.id, f"✅ {len(found)} ta qo'shildi. Jami: {len(udata['bulk_links'])}")
+    bot.register_next_step_handler(message, collect_bulk_links)
+
+def finalize_bulk_direct(message):
+    udata = get_user_step_data(message.from_user.id)
+    repo = g.get_repo(REPO_NAME)
+    anim_data, anim_contents = get_github_content(FILE_PATH)
+    
+    links = udata["bulk_links"]
+    link_idx = 0
+    
+    for anime_name, count_list in udata["bulk_json"].items():
+        count = count_list[0]
+        current_links = links[link_idx:link_idx + count]
+        link_idx += count
+        
+        target = None
+        for a in anim_data:
+            if anime_name.lower() in a["title"].lower():
+                target = a
+                break
+        
+        if target:
+            # Mavjud bo'lsa qismlarni linkvideo bilan yangilaydi yoki qo'shadi
+            for i, l in enumerate(current_links):
+                ep_nom = f"{len(target['qismlar']) + 1}-qism"
+                r_key = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+                target["qismlar"].append({
+                    "nom": ep_nom,
+                    "linkvideo": l,
+                    "link": f"https://t.me/{bot.get_me().username}?start={r_key}"
+                })
+    
+    save_github(repo, anim_contents, FILE_PATH, anim_data)
+    bot.send_message(message.chat.id, "✅ Ommaviy yuklash yakunlandi!", reply_markup=admin_menu())
 
 # --- QOLGAN FUNKSIYALAR ---
 def set_start_episode_index(message):
@@ -548,7 +650,6 @@ def finalize_shorts_upload(message):
     repo = g.get_repo(REPO_NAME)
     shorts_data, shorts_contents = get_github_content(SHORT_PATH)
     
-    # Ma'lumotlarni to'g'ri qo'shish (umrbod va nol bo'lmasligi uchun)
     for item in udata["short_list"]:
         shorts_data.append({
             "nom": udata["short_ona_name"],
